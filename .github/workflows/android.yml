@@ -1,0 +1,128 @@
+name: Build APK - BY Finance Manager
+
+on:
+  push:
+    branches: [ "main", "arena/**" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Fix gradlew permission
+        run: chmod +x gradlew
+
+      - name: Ensure gradle wrapper jar exists (download if missing)
+        run: |
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ] || [ ! -s gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "Downloading gradle-wrapper.jar..."
+            mkdir -p gradle/wrapper
+            # Try to download via gradle distribution
+            # Use official gradle wrapper jar from github releases via curl
+            curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.6.0/gradle/wrapper/gradle-wrapper.jar || \
+            wget -O gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.6.0/gradle/wrapper/gradle-wrapper.jar || \
+            echo "Failed to download wrapper jar, trying alternative..."
+            # Alternative: use gradle to generate wrapper if jar missing, we will use system gradle
+            if [ ! -s gradle/wrapper/gradle-wrapper.jar ]; then
+              echo "Installing gradle via sdkman alternative..."
+              # Download gradle binary directly
+              wget -q https://services.gradle.org/distributions/gradle-8.6-bin.zip -O /tmp/gradle.zip
+              unzip -q /tmp/gradle.zip -d /tmp
+              /tmp/gradle-8.6/bin/gradle wrapper --gradle-version 8.6 || true
+            fi
+          fi
+          ls -lh gradle/wrapper/
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+
+      - name: Build Release APK (unsigned)
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: by-finance-manager-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: by-finance-manager-release-apk
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 30
+
+      - name: Create Release APK with version info
+        run: |
+          mkdir -p artifacts
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug.apk
+          cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/BY-Finance-Manager-v1.0-release.apk
+          ls -lh artifacts/
+
+      - name: Upload Final Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BY-Finance-Manager-APKs
+          path: artifacts/*.apk
+
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: BY-Finance-Manager-APKs
+          path: apks
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "BY Финансы v1.0.${{ github.run_number }}"
+          body: |
+            ## BY Финансы - Финансовый менеджер 🇧🇾
+
+            ### Возможности:
+            - 💰 Учёт доходов и расходов в белорусских рублях (BYN)
+            - 💵 Автоматический пересчёт в доллары США (USD) по курсу НБРБ на день оплаты
+            - 📊 Баланс, общие суммы прихода/расхода в обеих валютах
+            - 🏷️ Источники доходов и расходов с кастомизацией (иконки, названия)
+            - 📅 Курс НБРБ загружается автоматически с api.nbrb.by
+            - 📱 Работает оффлайн, кэширует курсы
+
+            ### Установка:
+            Скачайте APK файл и установите на Android устройство.
+
+            ### Технические детали:
+            - Курс USD: https://api.nbrb.by/exrates/rates/USD?ondate=YYYY-MM-DD&parammode=2
+            - Формула: USD = BYN / курс_НБРБ
+            - База данных: Room
+            - Минимальная версия Android: 7.0 (API 24)
+
+            ---
+            Автоматическая сборка из коммита ${{ github.sha }}
+          files: apks/*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
