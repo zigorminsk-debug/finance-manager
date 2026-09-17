@@ -31,6 +31,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug APK
+        id: build_debug
         run: |
           set -o pipefail
           ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-debug.log
@@ -39,6 +40,7 @@ jobs:
           ls -lh app/build/outputs/apk/debug/ || true
 
       - name: Build Release APK
+        if: success()
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build-release.log
@@ -51,7 +53,7 @@ jobs:
         run: |
           echo "=== All build outputs ==="
           find . -name "*.apk" -o -name "*.log" | head -20
-          ls -R app/build/outputs/ || true
+          ls -R app/build/outputs/ 2>&1 | head -100 || true
 
       - name: Upload Debug APK
         if: always()
@@ -97,3 +99,25 @@ jobs:
           name: BY-Finance-Manager-APKs
           path: artifacts/*.apk
           if-no-files-found: error
+
+      - name: Save logs to repo on failure
+        if: failure()
+        run: |
+          echo "Build failed, saving logs to branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Create orphan branch for logs
+          git checkout --orphan temp-logs-${{ github.run_id }}
+          git rm -rf . || true
+          mkdir -p logs
+          cp $GITHUB_WORKSPACE/build-debug.log logs/ 2>/dev/null || echo "no debug log" > logs/build-debug.log
+          cp $GITHUB_WORKSPACE/build-release.log logs/ 2>/dev/null || echo "no release log" > logs/build-release.log
+          # Also capture gradle reports if exist
+          find $GITHUB_WORKSPACE -name "*.log" -type f -exec cp {} logs/ \; 2>/dev/null || true
+          echo "# Build logs for run ${{ github.run_id }}" > README.md
+          echo "Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> README.md
+          git add .
+          git commit -m "Add build logs for run ${{ github.run_id }}"
+          git push origin HEAD:logs/run-${{ github.run_id }} --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
