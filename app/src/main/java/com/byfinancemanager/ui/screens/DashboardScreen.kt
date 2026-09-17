@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+
 package com.byfinancemanager.ui.screens
 
 import androidx.compose.foundation.layout.*

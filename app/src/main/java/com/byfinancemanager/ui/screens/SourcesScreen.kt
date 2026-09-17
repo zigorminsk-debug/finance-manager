@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+
 package com.byfinancemanager.ui.screens
 
 import androidx.compose.foundation.layout.*
@@ -184,7 +186,7 @@ fun SourceItem(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AddSourceDialog(
     type: TransactionType,
