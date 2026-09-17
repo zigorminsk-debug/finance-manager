@@ -21,32 +21,24 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK (preinstalled check)
+        run: |
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
+          ls -la $ANDROID_HOME || ls -la /usr/local/lib/android/sdk || true
+          sdkmanager --version || $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --version || true
+          # Accept licenses
+          yes | sdkmanager --licenses || yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          # Ensure platforms
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
 
       - name: Fix gradlew permission
         run: chmod +x gradlew
 
-      - name: Ensure gradle wrapper jar exists (download if missing)
+      - name: Show gradle wrapper info
         run: |
-          if [ ! -f gradle/wrapper/gradle-wrapper.jar ] || [ ! -s gradle/wrapper/gradle-wrapper.jar ]; then
-            echo "Downloading gradle-wrapper.jar..."
-            mkdir -p gradle/wrapper
-            # Try to download via gradle distribution
-            # Use official gradle wrapper jar from github releases via curl
-            curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.6.0/gradle/wrapper/gradle-wrapper.jar || \
-            wget -O gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.6.0/gradle/wrapper/gradle-wrapper.jar || \
-            echo "Failed to download wrapper jar, trying alternative..."
-            # Alternative: use gradle to generate wrapper if jar missing, we will use system gradle
-            if [ ! -s gradle/wrapper/gradle-wrapper.jar ]; then
-              echo "Installing gradle via sdkman alternative..."
-              # Download gradle binary directly
-              wget -q https://services.gradle.org/distributions/gradle-8.6-bin.zip -O /tmp/gradle.zip
-              unzip -q /tmp/gradle.zip -d /tmp
-              /tmp/gradle-8.6/bin/gradle wrapper --gradle-version 8.6 || true
-            fi
-          fi
           ls -lh gradle/wrapper/
+          cat gradle/wrapper/gradle-wrapper.properties
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
@@ -74,6 +66,8 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug.apk
           cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/BY-Finance-Manager-v1.0-release.apk
           ls -lh artifacts/
+          echo "APK sizes:"
+          du -h artifacts/*
 
       - name: Upload Final Artifacts
         uses: actions/upload-artifact@v4
