@@ -24,40 +24,41 @@ jobs:
       - name: Setup Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          ls -la $ANDROID_HOME/cmdline-tools/ || true
-          sdkmanager --list | head -30 || $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --list | head -30 || true
-          yes | sdkmanager --licenses || yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          sdkmanager --list_installed | head -50
+          yes | sdkmanager --licenses || true
 
       - name: Fix gradlew permission
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        id: build_debug
         run: |
-          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
-          echo "BUILD_EXIT=${PIPESTATUS[0]}" >> $GITHUB_ENV
-
-      - name: Show build log tail on failure
-        if: failure() || env.BUILD_EXIT != '0'
-        run: |
-          echo "=== BUILD LOG TAIL ==="
-          tail -n 500 build.log || true
-          echo "=== END LOG ==="
-          echo "### Build Failed - Log Tail" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -n 300 build.log >> $GITHUB_STEP_SUMMARY || true
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-debug.log
+          echo "=== APKs after debug build ==="
+          find app/build -name "*.apk" -type f -ls || echo "No APK found"
+          ls -lh app/build/outputs/apk/debug/ || true
 
       - name: Build Release APK
-        if: success() || steps.build_debug.outcome == 'success'
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build-release.log
+          echo "=== APKs after release build ==="
+          find app/build -name "*.apk" -type f -ls || echo "No APK found"
+          ls -lh app/build/outputs/apk/release/ || true
+
+      - name: List all outputs
+        if: always()
+        run: |
+          echo "=== All build outputs ==="
+          find . -name "*.apk" -o -name "*.log" | head -20
+          ls -R app/build/outputs/ || true
 
       - name: Upload Debug APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: by-finance-manager-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
           if-no-files-found: warn
 
@@ -66,7 +67,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: by-finance-manager-release-apk
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 30
           if-no-files-found: warn
 
@@ -76,9 +77,8 @@ jobs:
         with:
           name: build-logs
           path: |
-            build.log
+            build-*.log
             app/build/reports/
-            app/build/outputs/
           retention-days: 7
           if-no-files-found: warn
 
@@ -86,8 +86,8 @@ jobs:
         if: success()
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug.apk || true
-          cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/BY-Finance-Manager-v1.0-release.apk || true
+          cp app/build/outputs/apk/debug/*.apk artifacts/BY-Finance-Manager-v1.0-debug.apk || cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug.apk || true
+          cp app/build/outputs/apk/release/*.apk artifacts/BY-Finance-Manager-v1.0-release.apk || cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/BY-Finance-Manager-v1.0-release.apk || true
           ls -lh artifacts/
 
       - name: Upload Final APKs
@@ -96,3 +96,4 @@ jobs:
         with:
           name: BY-Finance-Manager-APKs
           path: artifacts/*.apk
+          if-no-files-found: error
