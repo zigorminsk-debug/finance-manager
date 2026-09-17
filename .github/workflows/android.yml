@@ -10,6 +10,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,7 +58,7 @@ jobs:
           find . -name "*.apk" -o -name "*.log" | head -20
           ls -R app/build/outputs/ 2>&1 | head -100 || true
           echo "=== TAIL DEBUG LOG ==="
-          tail -n 400 build-debug.log || true
+          tail -n 500 build-debug.log || true
 
       - name: Upload Debug APK
         if: always()
@@ -102,31 +105,29 @@ jobs:
           path: artifacts/*.apk
           if-no-files-found: error
 
-      - name: Save logs to repo branch for debugging
+      - name: Create issue with logs on failure
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Saving logs to repo..."
-          # Get log tail
-          tail -n 500 build-debug.log > /tmp/fail.log 2>/dev/null || echo "no log" > /tmp/fail.log
-          # Encode
-          CONTENT=$(base64 -w 0 /tmp/fail.log)
-          # Try to create file via API on a new branch logs/failure-${{ github.run_id }}
-          # First get current commit sha of arena branch
-          BRANCH="arena/01a0b0b8-finance-manager"
-          # Create file in logs directory on same branch via API (will create commit)
-          gh api --method PUT repos/${{ github.repository }}/contents/build-logs/failure-${{ github.run_id }}.log \
-            -f message="ci: add build failure log for run ${{ github.run_id }}" \
-            -f content="$CONTENT" \
-            -f branch="$BRANCH" || echo "Failed to push log via API, trying git push"
-          # Also try git method
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin $BRANCH
-          git checkout $BRANCH
-          mkdir -p build-logs
-          cp /tmp/fail.log build-logs/failure-${{ github.run_id }}.log
-          git add build-logs/
-          git commit -m "ci: add build failure log for run ${{ github.run_id }}" || true
-          git push origin $BRANCH || true
+          echo "Creating issue with build failure logs..."
+          LOG_TAIL=$(tail -n 200 build-debug.log 2>/dev/null || echo "No log found")
+          # Create issue body with log
+          cat > /tmp/issue_body.md <<EOF
+          Build failed for run ${{ github.run_id }}
+
+          **Commit:** ${{ github.sha }}
+          **Branch:** ${{ github.ref }}
+          **Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ### Debug log tail:
+          \`\`\`
+          $LOG_TAIL
+          \`\`\`
+          EOF
+          gh issue create --title "Build failure log for run ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || echo "Failed to create issue"
+          # Also print to summary
+          echo "### Build Failure" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$LOG_TAIL" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
