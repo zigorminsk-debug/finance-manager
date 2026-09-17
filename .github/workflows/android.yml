@@ -42,18 +42,20 @@ jobs:
           echo "Keystore SHA256:"
           sha256sum app/release.keystore || true
           # Verify keystore can be read
-          keytool -list -keystore app/release.keystore -storepass byfinance123 -alias byfinance || echo "keytool list failed, trying with openssl"
-          openssl pkcs12 -info -in app/release.keystore -passin pass:byfinance123 -nokeys | head -20 || true
+          keytool -list -keystore app/release.keystore -storepass byfinance123 -alias byfinance -v 2>&1 | head -30 || echo "keytool list failed"
+          openssl pkcs12 -info -in app/release.keystore -passin pass:byfinance123 -nokeys 2>&1 | head -20 || true
+          echo "Keystore type detection:"
+          file app/release.keystore || true
 
       - name: Build Debug APK (signed with permanent key)
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-debug.log
+          ./gradlew assembleDebug --stacktrace --info --no-daemon 2>&1 | tee build-debug.log
           echo "=== APKs after debug build ==="
           find app/build -name "*.apk" -type f -ls || echo "No APK found"
           ls -lh app/build/outputs/apk/debug/ || true
           # Verify signature
-          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/debug/*.apk || true
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/debug/*.apk || echo "apksigner verify failed"
 
       - name: Build Release APK (signed with permanent key)
         run: |
@@ -62,7 +64,7 @@ jobs:
           echo "=== APKs after release build ==="
           find app/build -name "*.apk" -type f -ls || echo "No APK found"
           ls -lh app/build/outputs/apk/release/ || true
-          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/release/*.apk || true
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/release/*.apk || echo "apksigner verify failed"
 
       - name: Upload APKs
         if: always()
@@ -100,6 +102,31 @@ jobs:
           name: BY-Finance-Manager-APKs
           path: artifacts/*.apk
           if-no-files-found: error
+
+      - name: Create issue with logs on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Build failed, extracting errors..."
+          grep -n "e: \|error:\|FAILURE\|Exception" build-debug.log | head -n 200 > /tmp/errors.txt || echo "No errors found" > /tmp/errors.txt
+          tail -n 500 build-debug.log > /tmp/tail.txt || true
+          {
+            echo "Build failed for run ${{ github.run_id }}"
+            echo "Commit: ${{ github.sha }} Branch: ${{ github.ref }}"
+            echo "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "### Errors:"
+            echo '```'
+            cat /tmp/errors.txt
+            echo '```'
+            echo ""
+            echo "### Tail:"
+            echo '```'
+            cat /tmp/tail.txt
+            echo '```'
+          } > /tmp/issue_body.md
+          gh issue create --title "Build failure log for run ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || true
 
   release:
     if: always() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/arena/'))

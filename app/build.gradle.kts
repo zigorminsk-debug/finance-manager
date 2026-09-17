@@ -22,55 +22,46 @@ android {
         }
     }
 
-    // Постоянный ключ подписи для всех сборок
+    // Постоянный ключ подписи для всех сборок (исправлено падение + подпись)
     signingConfigs {
         create("release") {
-            // Читаем из keystore.properties если есть, иначе используем дефолтные значения
-            val keystorePropertiesFile = rootProject.file("app/keystore.properties")
-            val keystoreProperties = java.util.Properties()
-            if (keystorePropertiesFile.exists()) {
-                keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
-            }
-            val storeFilePath = keystoreProperties.getProperty("storeFile") ?: "release.keystore"
-            val storeFileObj = if (java.io.File(storeFilePath).isAbsolute) {
-                java.io.File(storeFilePath)
+            val keystoreFile = file("release.keystore")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = "byfinance123"
+                keyAlias = "byfinance"
+                keyPassword = "byfinance123"
+                // PKCS12 type for openssl-generated keystore
+                // storeType = "PKCS12" // autodetected
+                println("Using permanent release keystore: ${keystoreFile.absolutePath}, exists=${keystoreFile.exists()}, size=${keystoreFile.length()}")
             } else {
-                // Относительно app директории
-                java.io.File(projectDir, storeFilePath)
+                println("WARNING: release.keystore not found at ${keystoreFile.absolutePath}, using debug keystore as fallback")
+                // Fallback to debug keystore to avoid build failure
+                storeFile = file("debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
             }
-            // Fallback to file in app/ if not found
-            val finalStoreFile = if (storeFileObj.exists()) storeFileObj else java.io.File(projectDir, "release.keystore")
-            
-            storeFile = finalStoreFile
-            storePassword = keystoreProperties.getProperty("storePassword") ?: "byfinance123"
-            keyAlias = keystoreProperties.getProperty("keyAlias") ?: "byfinance"
-            keyPassword = keystoreProperties.getProperty("keyPassword") ?: "byfinance123"
-            
-            // Для GitHub Actions - можно переопределить через env переменные
+            // Allow override via env for CI
             storePassword = System.getenv("KEYSTORE_PASSWORD") ?: storePassword
             keyPassword = System.getenv("KEY_PASSWORD") ?: keyPassword
+            keyAlias = System.getenv("KEY_ALIAS") ?: keyAlias
         }
-        // Debug тоже подписываем релизным ключом для постоянства
         getByName("debug") {
-            val keystorePropertiesFile = rootProject.file("app/keystore.properties")
-            val keystoreProperties = java.util.Properties()
-            if (keystorePropertiesFile.exists()) {
-                keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
-            }
-            val storeFilePath = keystoreProperties.getProperty("storeFile") ?: "release.keystore"
-            val storeFileObj = if (java.io.File(storeFilePath).isAbsolute) {
-                java.io.File(storeFilePath)
+            val keystoreFile = file("release.keystore")
+            if (keystoreFile.exists()) {
+                // Подписываем debug тем же постоянным ключом для консистентности
+                storeFile = keystoreFile
+                storePassword = "byfinance123"
+                keyAlias = "byfinance"
+                keyPassword = "byfinance123"
+                println("Using permanent keystore for DEBUG: ${keystoreFile.absolutePath}")
             } else {
-                java.io.File(projectDir, storeFilePath)
+                println("Using default debug keystore")
             }
-            val finalStoreFile = if (storeFileObj.exists()) storeFileObj else java.io.File(projectDir, "release.keystore")
-            
-            storeFile = finalStoreFile
-            storePassword = keystoreProperties.getProperty("storePassword") ?: "byfinance123"
-            keyAlias = keystoreProperties.getProperty("keyAlias") ?: "byfinance"
-            keyPassword = keystoreProperties.getProperty("keyPassword") ?: "byfinance123"
             storePassword = System.getenv("KEYSTORE_PASSWORD") ?: storePassword
             keyPassword = System.getenv("KEY_PASSWORD") ?: keyPassword
+            keyAlias = System.getenv("KEY_ALIAS") ?: keyAlias
         }
     }
 
