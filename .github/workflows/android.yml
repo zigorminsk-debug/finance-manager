@@ -38,7 +38,6 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-debug.log
-          echo "=== APKs after debug build ==="
           find app/build -name "*.apk" -type f -ls || echo "No APK found"
           ls -lh app/build/outputs/apk/debug/ || true
 
@@ -47,16 +46,8 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build-release.log
-          echo "=== APKs after release build ==="
           find app/build -name "*.apk" -type f -ls || echo "No APK found"
           ls -lh app/build/outputs/apk/release/ || true
-
-      - name: List all outputs
-        if: always()
-        run: |
-          echo "=== All build outputs ==="
-          find . -name "*.apk" -o -name "*.log" | head -20
-          ls -R app/build/outputs/ 2>&1 | head -100 || true
 
       - name: Upload Debug APK
         if: always()
@@ -108,30 +99,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Creating issue with build failure logs..."
           grep -n "e: " build-debug.log | head -n 100 > /tmp/errors.txt || echo "No e: lines" > /tmp/errors.txt
-          FIRST_ERROR_LINE=$(grep -n "e: " build-debug.log | head -n 1 | cut -d: -f1)
-          if [ -n "$FIRST_ERROR_LINE" ]; then
-            START=$((FIRST_ERROR_LINE > 100 ? FIRST_ERROR_LINE - 100 : 1))
-            sed -n "${START},${FIRST_ERROR_LINE}p" build-debug.log > /tmp/context.txt
-          else
-            tail -n 500 build-debug.log > /tmp/context.txt
-          fi
           {
             echo "Build failed for run ${{ github.run_id }}"
+            echo "**Commit:** ${{ github.sha }} **Branch:** ${{ github.ref }}"
+            echo "Workflow: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo ""
-            echo "**Commit:** ${{ github.sha }}"
-            echo "**Branch:** ${{ github.ref }}"
-            echo "**Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo ""
-            echo "### Compilation errors:"
+            echo "### Errors:"
             echo '```'
             cat /tmp/errors.txt
             echo '```'
             echo ""
-            echo "### Context:"
+            echo "### Tail:"
             echo '```'
-            cat /tmp/context.txt
+            tail -n 300 build-debug.log
             echo '```'
           } > /tmp/issue_body.md
           gh issue create --title "Build failure log for run ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || true
@@ -142,6 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
     steps:
       - name: Download APKs
         uses: actions/download-artifact@v4
@@ -152,36 +134,63 @@ jobs:
       - name: List APKs
         run: ls -lh apks/
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release with gh CLI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -x
+          TAG="v1.0.${{ github.run_number }}"
+          echo "Creating release $TAG"
+          # Create release notes
+          cat > /tmp/release_notes.md <<EOF
+          ## BY Финансы - Финансовый менеджер 🇧🇾
+
+          ### Возможности:
+          - 💰 Учёт доходов и расходов в белорусских рублях (BYN)
+          - 💵 Автоматический пересчёт в доллары США (USD) по курсу НБРБ на день оплаты
+          - 📊 Баланс, общие суммы прихода/расхода в обеих валютах
+          - 🏷️ Источники доходов и расходов с кастомизацией (иконки, названия)
+          - 📅 Курс НБРБ загружается автоматически с api.nbrb.by
+          - 📱 Работает оффлайн, кэширует курсы
+
+          ### Установка:
+          Скачайте APK файл и установите на Android устройство.
+
+          ### Технические детали:
+          - Курс USD: https://api.nbrb.by/exrates/rates/USD?ondate=YYYY-MM-DD&parammode=2
+          - Формула: USD = BYN / курс_НБРБ
+          - База данных: Room
+          - Минимальная версия Android: 7.0 (API 24)
+
+          ---
+          Автоматическая сборка из коммита ${{ github.sha }}
+          Ветка: ${{ github.ref }}
+          EOF
+          cat /tmp/release_notes.md
+          # Try gh release create
+          gh release create "$TAG" apks/*.apk --title "BY Финансы $TAG" --notes-file /tmp/release_notes.md || echo "gh release create failed, trying action"
+          # If failed, try with --draft false
+          gh release view "$TAG" || echo "Release not found after create"
+
+      - name: Fallback - Create Release via Action
+        if: failure()
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: "BY Финансы v1.0.${{ github.run_number }}"
           body: |
             ## BY Финансы - Финансовый менеджер 🇧🇾
-
-            ### Возможности:
-            - 💰 Учёт доходов и расходов в белорусских рублях (BYN)
-            - 💵 Автоматический пересчёт в доллары США (USD) по курсу НБРБ на день оплаты
-            - 📊 Баланс, общие суммы прихода/расхода в обеих валютах
-            - 🏷️ Источники доходов и расходов с кастомизацией (иконки, названия)
-            - 📅 Курс НБРБ загружается автоматически с api.nbrb.by
-            - 📱 Работает оффлайн, кэширует курсы
-
-            ### Установка:
-            Скачайте APK файл и установите на Android устройство.
-
-            ### Технические детали:
-            - Курс USD: https://api.nbrb.by/exrates/rates/USD?ondate=YYYY-MM-DD&parammode=2
-            - Формула: USD = BYN / курс_НБРБ
-            - База данных: Room
-            - Минимальная версия Android: 7.0 (API 24)
-
-            ---
             Автоматическая сборка из коммита ${{ github.sha }}
-            Ветка: ${{ github.ref }}
           files: apks/*.apk
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create issue on release failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Release failed, creating issue..."
+          gh issue create --title "Release failure for run ${{ github.run_id }}" --body "Release job failed for https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} - check logs" --label "bug" || true
