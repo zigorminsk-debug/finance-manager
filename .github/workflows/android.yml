@@ -110,6 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
     steps:
       - name: Download APKs
         uses: actions/download-artifact@v4
@@ -123,6 +124,7 @@ jobs:
           du -h apks/*
 
       - name: Create GitHub Release (signed, permanent key)
+        id: create_release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.${{ github.run_number }}-signed
@@ -170,3 +172,26 @@ jobs:
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create issue on release failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Release failed for run ${{ github.run_id }}"
+          ls -lh apks/ > /tmp/list.txt
+          cat /tmp/list.txt
+          {
+            echo "Release failed for run ${{ github.run_id }}"
+            echo "Commit: ${{ github.sha }}"
+            echo "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "### APKs list:"
+            echo '```'
+            cat /tmp/list.txt
+            echo '```'
+            echo ""
+            echo "### Steps:"
+            echo "Check softprops/action-gh-release logs"
+          } > /tmp/issue_body.md
+          gh issue create --title "Release failure ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || true
