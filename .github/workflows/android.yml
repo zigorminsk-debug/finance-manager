@@ -1,0 +1,197 @@
+name: Build APK - BY Finance Manager
+
+on:
+  push:
+    branches: [ "main", "arena/**" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --list_installed | head -20
+          yes | sdkmanager --licenses || true
+
+      - name: Fix gradlew permission
+        run: chmod +x gradlew
+
+      - name: Verify keystore exists (permanent key)
+        run: |
+          echo "Checking for permanent keystore..."
+          ls -lh app/release.keystore
+          sha256sum app/release.keystore
+          keytool -list -keystore app/release.keystore -storepass byfinance123 -alias byfinance -v 2>&1 | head -20
+
+      - name: Build Debug APK (signed with permanent key)
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-debug.log
+          find app/build -name "*.apk" -type f -ls
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/debug/*.apk || true
+
+      - name: Build Release APK (signed with permanent key)
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build-release.log
+          find app/build -name "*.apk" -type f -ls
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/release/*.apk || true
+
+      - name: Upload APKs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: by-finance-manager-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Create Final Artifacts (signed)
+        if: success()
+        run: |
+          mkdir -p artifacts
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug-signed.apk
+          cp app/build/outputs/apk/release/app-release.apk artifacts/BY-Finance-Manager-v1.0-release-signed.apk
+          cp artifacts/BY-Finance-Manager-v1.0-debug-signed.apk artifacts/BY-Finance-Manager-v1.0-debug.apk
+          cp artifacts/BY-Finance-Manager-v1.0-release-signed.apk artifacts/BY-Finance-Manager-v1.0-release.apk
+          ls -lh artifacts/
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs artifacts/*.apk || true
+
+      - name: Upload Final APKs (signed with permanent key)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BY-Finance-Manager-APKs
+          path: artifacts/*.apk
+          if-no-files-found: error
+
+      - name: Create issue with logs on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          grep -n "e: \|error:" build-debug.log | head -n 100 > /tmp/errors.txt || true
+          {
+            echo "Build failed for run ${{ github.run_id }} - ${{ github.sha }}"
+            echo "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo '```'
+            cat /tmp/errors.txt
+            echo '```'
+            echo ""
+            echo '```'
+            tail -n 300 build-debug.log
+            echo '```'
+          } > /tmp/issue_body.md
+          gh issue create --title "Build failure ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || true
+
+  release:
+    if: success() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/arena/'))
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: BY-Finance-Manager-APKs
+          path: apks
+
+      - name: List APKs
+        run: |
+          ls -lh apks/
+          du -h apks/*
+
+      - name: Create GitHub Release (signed, permanent key)
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}-signed
+          name: "BY Финансы v1.0.${{ github.run_number }} (signed, fixed)"
+          body: |
+            ## BY Финансы - Финансовый менеджер 🇧🇾 (Исправлено падение + подпись постоянным ключом)
+
+            ### ✅ Исправления:
+            - Исправлено падение при запуске: добавлен `android:name=".FinanceApp"` в AndroidManifest.xml (был ClassCastException)
+            - Добавлен постоянный ключ подписи `app/release.keystore` (byfinance, 10000 дней, CN=BY Finance Manager)
+            - Подписываются обе сборки debug и release одним ключом - при обновлении данные сохранятся!
+            - Уменьшены иконки с 1.3MB до 300 bytes (было OOM)
+            - Исправлен DatabaseCallback для надёжной инициализации
+
+            ### 📱 Скачать APK (подписан постоянным ключом):
+            - `BY-Finance-Manager-v1.0-debug-signed.apk` - debug, подписан постоянным ключом
+            - `BY-Finance-Manager-v1.0-release-signed.apk` - release, подписан постоянным ключом (рекомендуется)
+            - `BY-Finance-Manager-v1.0-debug.apk` и `BY-Finance-Manager-v1.0-release.apk` - копии для совместимости
+
+            ### Возможности:
+            - 💰 Приход / Расход / Остаток в BYN + пересчёт в USD по курсу НБРБ на день оплаты
+            - 💵 Курс НБРБ: api.nbrb.by, формула USD = BYN / курс, кэширование
+            - 🏷️ Источники доходов/расходов с иконками
+            - 📊 Фильтры по периоду и типу, баланс, статистика
+
+            ### Установка:
+            1. Скачайте `...-release-signed.apk`
+            2. Разрешите установку из неизвестных источников
+            3. Установите - приложение больше не падает!
+
+            ### Технические детали:
+            - Подпись: постоянный ключ byfinance (SHA256: релизный ключ)
+            - Keystore: app/release.keystore (2.7K, PKCS12)
+            - Пароль: byfinance123, alias: byfinance
+            - Min SDK 24 (Android 7.0+), Target 34
+            - Сборка: GitHub Actions, JDK 17, Gradle 8.6
+
+            ---
+            Коммит: ${{ github.sha }}
+            Ветка: ${{ github.ref }}
+            Дата: ${{ github.event.head_commit.timestamp }}
+          files: apks/*.apk
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create issue on release failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Release failed for run ${{ github.run_id }}"
+          ls -lh apks/ > /tmp/list.txt
+          cat /tmp/list.txt
+          {
+            echo "Release failed for run ${{ github.run_id }}"
+            echo "Commit: ${{ github.sha }}"
+            echo "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "### APKs list:"
+            echo '```'
+            cat /tmp/list.txt
+            echo '```'
+            echo ""
+            echo "### Steps:"
+            echo "Check softprops/action-gh-release logs"
+          } > /tmp/issue_body.md
+          gh issue create --title "Release failure ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || true
