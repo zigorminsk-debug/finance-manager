@@ -57,8 +57,6 @@ jobs:
           echo "=== All build outputs ==="
           find . -name "*.apk" -o -name "*.log" | head -20
           ls -R app/build/outputs/ 2>&1 | head -100 || true
-          echo "=== TAIL DEBUG LOG ==="
-          tail -n 500 build-debug.log || true
 
       - name: Upload Debug APK
         if: always()
@@ -111,24 +109,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Creating issue with build failure logs..."
-          # Extract compilation errors
-          echo "=== Extracting errors ==="
           grep -n "e: " build-debug.log | head -n 100 > /tmp/errors.txt || echo "No e: lines" > /tmp/errors.txt
-          grep -n "error:" build-debug.log | head -n 100 >> /tmp/errors.txt || true
-          grep -n "FAILURE" build-debug.log | head -n 20 >> /tmp/errors.txt || true
-          cat /tmp/errors.txt
-          # Also get 50 lines before first e:
           FIRST_ERROR_LINE=$(grep -n "e: " build-debug.log | head -n 1 | cut -d: -f1)
           if [ -n "$FIRST_ERROR_LINE" ]; then
             START=$((FIRST_ERROR_LINE > 100 ? FIRST_ERROR_LINE - 100 : 1))
             sed -n "${START},${FIRST_ERROR_LINE}p" build-debug.log > /tmp/context.txt
-            echo "=== Context around first error ==="
-            cat /tmp/context.txt
           else
-            echo "No first error line found"
             tail -n 500 build-debug.log > /tmp/context.txt
           fi
-          # Create issue body
           {
             echo "Build failed for run ${{ github.run_id }}"
             echo ""
@@ -136,22 +124,64 @@ jobs:
             echo "**Branch:** ${{ github.ref }}"
             echo "**Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo ""
-            echo "### Compilation errors (grep e:):"
+            echo "### Compilation errors:"
             echo '```'
             cat /tmp/errors.txt
             echo '```'
             echo ""
-            echo "### Context around first error:"
+            echo "### Context:"
             echo '```'
             cat /tmp/context.txt
             echo '```'
-            echo ""
-            echo "### Full tail (last 300 lines):"
-            echo '```'
-            tail -n 300 build-debug.log
-            echo '```'
           } > /tmp/issue_body.md
-          gh issue create --title "Build failure log for run ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || echo "Failed to create issue"
-          # Also print to summary
-          echo "### Build Failure" >> $GITHUB_STEP_SUMMARY
-          cat /tmp/issue_body.md >> $GITHUB_STEP_SUMMARY || true
+          gh issue create --title "Build failure log for run ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || true
+
+  release:
+    if: always() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/arena/'))
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: BY-Finance-Manager-APKs
+          path: apks
+
+      - name: List APKs
+        run: ls -lh apks/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "BY Финансы v1.0.${{ github.run_number }}"
+          body: |
+            ## BY Финансы - Финансовый менеджер 🇧🇾
+
+            ### Возможности:
+            - 💰 Учёт доходов и расходов в белорусских рублях (BYN)
+            - 💵 Автоматический пересчёт в доллары США (USD) по курсу НБРБ на день оплаты
+            - 📊 Баланс, общие суммы прихода/расхода в обеих валютах
+            - 🏷️ Источники доходов и расходов с кастомизацией (иконки, названия)
+            - 📅 Курс НБРБ загружается автоматически с api.nbrb.by
+            - 📱 Работает оффлайн, кэширует курсы
+
+            ### Установка:
+            Скачайте APK файл и установите на Android устройство.
+
+            ### Технические детали:
+            - Курс USD: https://api.nbrb.by/exrates/rates/USD?ondate=YYYY-MM-DD&parammode=2
+            - Формула: USD = BYN / курс_НБРБ
+            - База данных: Room
+            - Минимальная версия Android: 7.0 (API 24)
+
+            ---
+            Автоматическая сборка из коммита ${{ github.sha }}
+            Ветка: ${{ github.ref }}
+          files: apks/*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
