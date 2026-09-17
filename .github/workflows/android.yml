@@ -10,9 +10,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      gists: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,9 +55,7 @@ jobs:
           find . -name "*.apk" -o -name "*.log" | head -20
           ls -R app/build/outputs/ 2>&1 | head -100 || true
           echo "=== TAIL DEBUG LOG ==="
-          tail -n 300 build-debug.log || true
-          echo "=== TAIL RELEASE LOG ==="
-          tail -n 100 build-release.log || true
+          tail -n 400 build-debug.log || true
 
       - name: Upload Debug APK
         if: always()
@@ -107,19 +102,31 @@ jobs:
           path: artifacts/*.apk
           if-no-files-found: error
 
-      - name: Upload logs to gist on failure
+      - name: Save logs to repo branch for debugging
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Attempting to create gist with logs..."
-          # Create gist via API
-          # Prepare content - truncate to 1MB max for gist
-          tail -c 900000 build-debug.log > /tmp/log_tail.txt || echo "no log" > /tmp/log_tail.txt
-          # Use gh gist create
-          gh gist create /tmp/log_tail.txt --public --desc "Build logs for run ${{ github.run_id }} - https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" || echo "gist create failed"
-          # Also print tail to summary
-          echo "### Build Failure Log" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -n 200 build-debug.log >> $GITHUB_STEP_SUMMARY || true
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Saving logs to repo..."
+          # Get log tail
+          tail -n 500 build-debug.log > /tmp/fail.log 2>/dev/null || echo "no log" > /tmp/fail.log
+          # Encode
+          CONTENT=$(base64 -w 0 /tmp/fail.log)
+          # Try to create file via API on a new branch logs/failure-${{ github.run_id }}
+          # First get current commit sha of arena branch
+          BRANCH="arena/01a0b0b8-finance-manager"
+          # Create file in logs directory on same branch via API (will create commit)
+          gh api --method PUT repos/${{ github.repository }}/contents/build-logs/failure-${{ github.run_id }}.log \
+            -f message="ci: add build failure log for run ${{ github.run_id }}" \
+            -f content="$CONTENT" \
+            -f branch="$BRANCH" || echo "Failed to push log via API, trying git push"
+          # Also try git method
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin $BRANCH
+          git checkout $BRANCH
+          mkdir -p build-logs
+          cp /tmp/fail.log build-logs/failure-${{ github.run_id }}.log
+          git add build-logs/
+          git commit -m "ci: add build failure log for run ${{ github.run_id }}" || true
+          git push origin $BRANCH || true
