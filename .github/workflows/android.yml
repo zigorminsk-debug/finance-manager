@@ -21,102 +21,78 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Setup Android SDK (preinstalled check)
+      - name: Setup Android SDK
         run: |
-          echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
-          ls -la $ANDROID_HOME || ls -la /usr/local/lib/android/sdk || true
-          sdkmanager --version || $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --version || true
-          # Accept licenses
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls -la $ANDROID_HOME/cmdline-tools/ || true
+          sdkmanager --list | head -30 || $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --list | head -30 || true
           yes | sdkmanager --licenses || yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          # Ensure platforms
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
 
       - name: Fix gradlew permission
         run: chmod +x gradlew
 
-      - name: Show gradle wrapper info
-        run: |
-          ls -lh gradle/wrapper/
-          cat gradle/wrapper/gradle-wrapper.properties
-
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        id: build_debug
+        run: |
+          ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build.log
+          echo "BUILD_EXIT=${PIPESTATUS[0]}" >> $GITHUB_ENV
 
-      - name: Build Release APK (unsigned)
+      - name: Show build log tail on failure
+        if: failure() || env.BUILD_EXIT != '0'
+        run: |
+          echo "=== BUILD LOG TAIL ==="
+          tail -n 500 build.log || true
+          echo "=== END LOG ==="
+          echo "### Build Failed - Log Tail" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -n 300 build.log >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Build Release APK
+        if: success() || steps.build_debug.outcome == 'success'
         run: ./gradlew assembleRelease --stacktrace --no-daemon
 
       - name: Upload Debug APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: by-finance-manager-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload Release APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: by-finance-manager-release-apk
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 30
+          if-no-files-found: warn
 
-      - name: Create Release APK with version info
+      - name: Upload Build Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build.log
+            app/build/reports/
+            app/build/outputs/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Create Final Artifacts
+        if: success()
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug.apk
-          cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/BY-Finance-Manager-v1.0-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug.apk || true
+          cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/BY-Finance-Manager-v1.0-release.apk || true
           ls -lh artifacts/
-          echo "APK sizes:"
-          du -h artifacts/*
 
-      - name: Upload Final Artifacts
+      - name: Upload Final APKs
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: BY-Finance-Manager-APKs
           path: artifacts/*.apk
-
-  release:
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download APKs
-        uses: actions/download-artifact@v4
-        with:
-          name: BY-Finance-Manager-APKs
-          path: apks
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: "BY Финансы v1.0.${{ github.run_number }}"
-          body: |
-            ## BY Финансы - Финансовый менеджер 🇧🇾
-
-            ### Возможности:
-            - 💰 Учёт доходов и расходов в белорусских рублях (BYN)
-            - 💵 Автоматический пересчёт в доллары США (USD) по курсу НБРБ на день оплаты
-            - 📊 Баланс, общие суммы прихода/расхода в обеих валютах
-            - 🏷️ Источники доходов и расходов с кастомизацией (иконки, названия)
-            - 📅 Курс НБРБ загружается автоматически с api.nbrb.by
-            - 📱 Работает оффлайн, кэширует курсы
-
-            ### Установка:
-            Скачайте APK файл и установите на Android устройство.
-
-            ### Технические детали:
-            - Курс USD: https://api.nbrb.by/exrates/rates/USD?ondate=YYYY-MM-DD&parammode=2
-            - Формула: USD = BYN / курс_НБРБ
-            - База данных: Room
-            - Минимальная версия Android: 7.0 (API 24)
-
-            ---
-            Автоматическая сборка из коммита ${{ github.sha }}
-          files: apks/*.apk
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
