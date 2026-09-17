@@ -111,23 +111,47 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Creating issue with build failure logs..."
-          LOG_TAIL=$(tail -n 200 build-debug.log 2>/dev/null || echo "No log found")
-          # Create issue body with log
-          cat > /tmp/issue_body.md <<EOF
-          Build failed for run ${{ github.run_id }}
-
-          **Commit:** ${{ github.sha }}
-          **Branch:** ${{ github.ref }}
-          **Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-          ### Debug log tail:
-          \`\`\`
-          $LOG_TAIL
-          \`\`\`
-          EOF
+          # Extract compilation errors
+          echo "=== Extracting errors ==="
+          grep -n "e: " build-debug.log | head -n 100 > /tmp/errors.txt || echo "No e: lines" > /tmp/errors.txt
+          grep -n "error:" build-debug.log | head -n 100 >> /tmp/errors.txt || true
+          grep -n "FAILURE" build-debug.log | head -n 20 >> /tmp/errors.txt || true
+          cat /tmp/errors.txt
+          # Also get 50 lines before first e:
+          FIRST_ERROR_LINE=$(grep -n "e: " build-debug.log | head -n 1 | cut -d: -f1)
+          if [ -n "$FIRST_ERROR_LINE" ]; then
+            START=$((FIRST_ERROR_LINE > 100 ? FIRST_ERROR_LINE - 100 : 1))
+            sed -n "${START},${FIRST_ERROR_LINE}p" build-debug.log > /tmp/context.txt
+            echo "=== Context around first error ==="
+            cat /tmp/context.txt
+          else
+            echo "No first error line found"
+            tail -n 500 build-debug.log > /tmp/context.txt
+          fi
+          # Create issue body
+          {
+            echo "Build failed for run ${{ github.run_id }}"
+            echo ""
+            echo "**Commit:** ${{ github.sha }}"
+            echo "**Branch:** ${{ github.ref }}"
+            echo "**Workflow:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "### Compilation errors (grep e:):"
+            echo '```'
+            cat /tmp/errors.txt
+            echo '```'
+            echo ""
+            echo "### Context around first error:"
+            echo '```'
+            cat /tmp/context.txt
+            echo '```'
+            echo ""
+            echo "### Full tail (last 300 lines):"
+            echo '```'
+            tail -n 300 build-debug.log
+            echo '```'
+          } > /tmp/issue_body.md
           gh issue create --title "Build failure log for run ${{ github.run_id }}" --body-file /tmp/issue_body.md --label "bug" || echo "Failed to create issue"
           # Also print to summary
           echo "### Build Failure" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "$LOG_TAIL" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/issue_body.md >> $GITHUB_STEP_SUMMARY || true
