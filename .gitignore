@@ -18,8 +18,11 @@ proguard/
 captures/
 .externalNativeBuild/
 .cxx/
+# Keep release keystore for permanent signing
 *.keystore
 !debug.keystore
+!app/release.keystore
+!release.keystore
 
 # IDE
 .idea/

@@ -22,6 +22,58 @@ android {
         }
     }
 
+    // Постоянный ключ подписи для всех сборок
+    signingConfigs {
+        create("release") {
+            // Читаем из keystore.properties если есть, иначе используем дефолтные значения
+            val keystorePropertiesFile = rootProject.file("app/keystore.properties")
+            val keystoreProperties = java.util.Properties()
+            if (keystorePropertiesFile.exists()) {
+                keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+            }
+            val storeFilePath = keystoreProperties.getProperty("storeFile") ?: "release.keystore"
+            val storeFileObj = if (java.io.File(storeFilePath).isAbsolute) {
+                java.io.File(storeFilePath)
+            } else {
+                // Относительно app директории
+                java.io.File(projectDir, storeFilePath)
+            }
+            // Fallback to file in app/ if not found
+            val finalStoreFile = if (storeFileObj.exists()) storeFileObj else java.io.File(projectDir, "release.keystore")
+            
+            storeFile = finalStoreFile
+            storePassword = keystoreProperties.getProperty("storePassword") ?: "byfinance123"
+            keyAlias = keystoreProperties.getProperty("keyAlias") ?: "byfinance"
+            keyPassword = keystoreProperties.getProperty("keyPassword") ?: "byfinance123"
+            
+            // Для GitHub Actions - можно переопределить через env переменные
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: storePassword
+            keyPassword = System.getenv("KEY_PASSWORD") ?: keyPassword
+        }
+        // Debug тоже подписываем релизным ключом для постоянства
+        getByName("debug") {
+            val keystorePropertiesFile = rootProject.file("app/keystore.properties")
+            val keystoreProperties = java.util.Properties()
+            if (keystorePropertiesFile.exists()) {
+                keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+            }
+            val storeFilePath = keystoreProperties.getProperty("storeFile") ?: "release.keystore"
+            val storeFileObj = if (java.io.File(storeFilePath).isAbsolute) {
+                java.io.File(storeFilePath)
+            } else {
+                java.io.File(projectDir, storeFilePath)
+            }
+            val finalStoreFile = if (storeFileObj.exists()) storeFileObj else java.io.File(projectDir, "release.keystore")
+            
+            storeFile = finalStoreFile
+            storePassword = keystoreProperties.getProperty("storePassword") ?: "byfinance123"
+            keyAlias = keystoreProperties.getProperty("keyAlias") ?: "byfinance"
+            keyPassword = keystoreProperties.getProperty("keyPassword") ?: "byfinance123"
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: storePassword
+            keyPassword = System.getenv("KEY_PASSWORD") ?: keyPassword
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -29,9 +81,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {

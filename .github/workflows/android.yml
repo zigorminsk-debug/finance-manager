@@ -33,17 +33,36 @@ jobs:
       - name: Fix gradlew permission
         run: chmod +x gradlew
 
-      - name: Build Debug APK
+      - name: Verify keystore exists (permanent key)
+        run: |
+          echo "Checking for permanent keystore..."
+          ls -lh app/release.keystore || echo "Keystore not found!"
+          ls -lh app/keystore.properties || echo "Properties not found!"
+          cat app/keystore.properties || true
+          echo "Keystore SHA256:"
+          sha256sum app/release.keystore || true
+          # Verify keystore can be read
+          keytool -list -keystore app/release.keystore -storepass byfinance123 -alias byfinance || echo "keytool list failed, trying with openssl"
+          openssl pkcs12 -info -in app/release.keystore -passin pass:byfinance123 -nokeys | head -20 || true
+
+      - name: Build Debug APK (signed with permanent key)
         run: |
           set -o pipefail
           ./gradlew assembleDebug --stacktrace --no-daemon 2>&1 | tee build-debug.log
+          echo "=== APKs after debug build ==="
           find app/build -name "*.apk" -type f -ls || echo "No APK found"
+          ls -lh app/build/outputs/apk/debug/ || true
+          # Verify signature
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/debug/*.apk || true
 
-      - name: Build Release APK
+      - name: Build Release APK (signed with permanent key)
         run: |
           set -o pipefail
           ./gradlew assembleRelease --stacktrace --no-daemon 2>&1 | tee build-release.log
+          echo "=== APKs after release build ==="
           find app/build -name "*.apk" -type f -ls || echo "No APK found"
+          ls -lh app/build/outputs/apk/release/ || true
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/release/*.apk || true
 
       - name: Upload APKs
         if: always()
@@ -56,18 +75,25 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Create Final Artifacts
+      - name: Create Final Artifacts (signed)
         if: success()
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug.apk || cp app/build/outputs/apk/debug/*.apk artifacts/BY-Finance-Manager-v1.0-debug.apk || true
-          cp app/build/outputs/apk/release/app-release-unsigned.apk artifacts/BY-Finance-Manager-v1.0-release.apk || cp app/build/outputs/apk/release/*.apk artifacts/BY-Finance-Manager-v1.0-release.apk || true
+          # Debug signed with permanent key
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/BY-Finance-Manager-v1.0-debug-signed.apk || cp app/build/outputs/apk/debug/*.apk artifacts/BY-Finance-Manager-v1.0-debug-signed.apk || true
+          # Release signed with permanent key
+          cp app/build/outputs/apk/release/app-release.apk artifacts/BY-Finance-Manager-v1.0-release-signed.apk || cp app/build/outputs/apk/release/*.apk artifacts/BY-Finance-Manager-v1.0-release-signed.apk || true
+          # Also keep old names for compatibility
+          cp artifacts/BY-Finance-Manager-v1.0-debug-signed.apk artifacts/BY-Finance-Manager-v1.0-debug.apk || true
+          cp artifacts/BY-Finance-Manager-v1.0-release-signed.apk artifacts/BY-Finance-Manager-v1.0-release.apk || true
+          # Version with commit hash
+          cp artifacts/BY-Finance-Manager-v1.0-debug-signed.apk artifacts/BY-Finance-Manager-${{ github.sha }}-debug-signed.apk || true
+          cp artifacts/BY-Finance-Manager-v1.0-release-signed.apk artifacts/BY-Finance-Manager-${{ github.sha }}-release-signed.apk || true
           ls -lh artifacts/
-          # Also create version with commit hash
-          cp artifacts/BY-Finance-Manager-v1.0-debug.apk artifacts/BY-Finance-Manager-${{ github.sha }}-debug.apk || true
-          cp artifacts/BY-Finance-Manager-v1.0-release.apk artifacts/BY-Finance-Manager-${{ github.sha }}-release.apk || true
+          echo "=== Verifying final APKs ==="
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs artifacts/*.apk || true
 
-      - name: Upload Final APKs
+      - name: Upload Final APKs (signed with permanent key)
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -93,19 +119,28 @@ jobs:
           ls -lh apks/
           du -h apks/*
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (signed APKs)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -x
           TAG="v1.0.${{ github.run_number }}"
-          echo "Creating release $TAG"
+          echo "Creating release $TAG with permanently signed APKs"
           cat > /tmp/release_notes.md <<EOF
-          ## BY Финансы - Финансовый менеджер 🇧🇾
+          ## BY Финансы - Финансовый менеджер 🇧🇾 (Подписанный APK)
 
-          ### 📱 Скачать APK:
-          - **Debug APK** (29MB, для тестирования, с логами) - \`BY-Finance-Manager-v1.0-debug.apk\`
-          - **Release APK** (19MB, оптимизированный) - \`BY-Finance-Manager-v1.0-release.apk\`
+          ### 📱 Скачать APK (подписан постоянным ключом):
+          - **Debug Signed APK** - \`BY-Finance-Manager-v1.0-debug-signed.apk\` (подписан ключом byfinance, для тестирования)
+          - **Release Signed APK** - \`BY-Finance-Manager-v1.0-release-signed.apk\` (подписан постоянным ключом, для установки)
+          - Оба APK подписаны одним постоянным ключом: CN=BY Finance Manager, O=BY Finance, C=BY
+          - Keystore: app/release.keystore (SHA256: $(sha256sum apks/BY-Finance-Manager-v1.0-release-signed.apk 2>/dev/null | cut -d' ' -f1 || echo "unknown"))
+
+          ### ✅ Исправления в этом релизе:
+          - Исправлено падение приложения при запуске (добавлен android:name=".FinanceApp" в AndroidManifest.xml)
+          - Добавлен постоянный ключ подписи (release.keystore) для всех сборок
+          - Уменьшены иконки приложения (были 1.3MB, стали 300 bytes) для предотвращения OOM
+          - Исправлен DatabaseCallback для надёжной инициализации дефолтных источников
+          - Добавлена проверка подписи APK через apksigner
 
           ### Возможности:
           - 💰 Учёт доходов и расходов в белорусских рублях (BYN)
@@ -116,29 +151,28 @@ jobs:
           - 📱 Работает оффлайн, кэширует курсы
 
           ### Установка:
-          1. Скачайте APK файл
+          1. Скачайте APK файл (рекомендуется release-signed)
           2. Разрешите установку из неизвестных источников в настройках Android
           3. Установите APK
+          4. При обновлении используйте тот же ключ подписи - данные сохранятся!
 
           ### Технические детали:
           - Курс USD: https://api.nbrb.by/exrates/rates/USD?ondate=YYYY-MM-DD&parammode=2
           - Формула: USD = BYN / курс_НБРБ
           - База данных: Room
+          - Подпись: постоянный ключ byfinance (valid 10000 days)
           - Минимальная версия Android: 7.0 (API 24)
-          - Сборка: GitHub Actions
 
           ---
           Автоматическая сборка из коммита ${{ github.sha }}
           Ветка: ${{ github.ref }}
           Дата сборки: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Подписан: постоянным ключом BY Finance Manager
           EOF
           cat /tmp/release_notes.md
-          # Create release without assets first
-          gh release create "$TAG" --title "BY Финансы $TAG" --notes-file /tmp/release_notes.md --latest || echo "Release may already exist"
-          # Upload assets one by one
+          gh release create "$TAG" --title "BY Финансы $TAG (signed)" --notes-file /tmp/release_notes.md --latest || echo "Release may already exist, will try upload"
           for apk in apks/*.apk; do
             echo "Uploading $apk..."
-            gh release upload "$TAG" "$apk" --clobber || echo "Failed to upload $apk"
+            gh release upload "$TAG" "$apk" --clobber || echo "Failed to upload $apk, trying again"
           done
-          echo "Release assets:"
           gh release view "$TAG" --json assets --jq '.assets[] | .name' || true

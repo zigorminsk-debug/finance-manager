@@ -28,7 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "finance_manager_db"
                 )
-                    .addCallback(DatabaseCallback(scope))
+                    .addCallback(DatabaseCallback(context.applicationContext, scope))
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
@@ -37,12 +37,50 @@ abstract class AppDatabase : RoomDatabase() {
         }
     }
 
-    private class DatabaseCallback(private val scope: CoroutineScope) : RoomDatabase.Callback() {
+    private class DatabaseCallback(
+        private val context: Context,
+        private val scope: CoroutineScope
+    ) : RoomDatabase.Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) {
             super.onCreate(db)
-            INSTANCE?.let { database ->
-                scope.launch(Dispatchers.IO) {
+            // Попытка через INSTANCE, если null - через getDatabase
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val database = INSTANCE ?: getDatabase(context, this)
                     populateDatabase(database.sourceDao())
+                } catch (e: Exception) {
+                    // Fallback: вставка через прямой SQL если DAO недоступен
+                    try {
+                        // Вставляем дефолтные источники напрямую через SQL
+                        val incomeSources = listOf(
+                            Triple("Зарплата", "INCOME", "💼"),
+                            Triple("Фриланс", "INCOME", "💻"),
+                            Triple("Бизнес", "INCOME", "🏢"),
+                            Triple("Инвестиции", "INCOME", "📈"),
+                            Triple("Подарки", "INCOME", "🎁"),
+                            Triple("Прочие доходы", "INCOME", "💰")
+                        )
+                        val expenseSources = listOf(
+                            Triple("Продукты", "EXPENSE", "🛒"),
+                            Triple("Транспорт", "EXPENSE", "🚗"),
+                            Triple("Жильё / Коммуналка", "EXPENSE", "🏠"),
+                            Triple("Здоровье", "EXPENSE", "⚕️"),
+                            Triple("Развлечения", "EXPENSE", "🎮"),
+                            Triple("Одежда", "EXPENSE", "👕"),
+                            Triple("Кафе / Рестораны", "EXPENSE", "🍽️"),
+                            Triple("Связь / Интернет", "EXPENSE", "📱"),
+                            Triple("Образование", "EXPENSE", "📚"),
+                            Triple("Прочие расходы", "EXPENSE", "💸")
+                        )
+                        (incomeSources + expenseSources).forEach { (name, type, icon) ->
+                            try {
+                                db.execSQL(
+                                    "INSERT INTO sources (name, type, icon, color, isDefault, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+                                    arrayOf(name, type, icon, 0xFF4CAF50L, 1, System.currentTimeMillis())
+                                )
+                            } catch (_: Exception) {}
+                        }
+                    } catch (_: Exception) {}
                 }
             }
         }
