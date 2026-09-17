@@ -5,13 +5,23 @@
 
 Финансовый менеджер для учёта личных финансов с поддержкой белорусского рубля (BYN) и доллара США (USD) по курсу Национального Банка Республики Беларусь (НБРБ). **APK собирается автоматически через GitHub Actions.**
 
-## 📥 Скачать APK
+## 📥 Скачать APK (Исправлено падение + подпись постоянным ключом)
 
-### Последний релиз:
-- **GitHub Releases**: [https://github.com/zigorminsk-debug/finance-manager/releases](https://github.com/zigorminsk-debug/finance-manager/releases)
-- **Файлы**:
-  - `BY-Finance-Manager-v1.0-debug.apk` (29MB, с логами, для тестирования)
-  - `BY-Finance-Manager-v1.0-release.apk` (19MB, оптимизированный)
+### Последний релиз (подписан, не падает):
+- **GitHub Releases**: [https://github.com/zigorminsk-debug/finance-manager/releases](https://github.com/zigorminsk-debug/finance-manager/releases) - **Latest: v1.0.18-signed**
+- **Файлы (подписаны постоянным ключом byfinance)**:
+  - `BY-Finance-Manager-v1.0-release-signed.apk` (11MB, оптимизированный, **рекомендуется**)
+  - `BY-Finance-Manager-v1.0-debug-signed.apk` (17MB, с логами)
+  - Подпись: CN=BY Finance Manager, O=BY Finance, C=BY, 10000 дней, ключ `app/release.keystore`
+  - При обновлении данные сохранятся (один постоянный ключ)!
+
+### Что исправлено в v1.0.18-signed:
+- ✅ Исправлено падение при запуске (ClassCastException: Application -> FinanceApp)
+  - Добавлен `android:name=".FinanceApp"` в AndroidManifest.xml
+- ✅ Добавлен постоянный ключ подписи (release.keystore, byfinance123)
+  - Теперь все APK подписаны одним ключом, обновления без потери данных
+- ✅ Уменьшены иконки с 1.3MB до 300 bytes (было OOM)
+- ✅ Исправлен DatabaseCallback для надёжной инициализации
 
 ### Из Actions (последняя сборка):
 1. Перейдите в [Actions](https://github.com/zigorminsk-debug/finance-manager/actions/workflows/android.yml)
